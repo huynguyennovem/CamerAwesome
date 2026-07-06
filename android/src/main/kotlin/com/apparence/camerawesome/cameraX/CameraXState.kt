@@ -2,7 +2,6 @@ package com.apparence.camerawesome.cameraX
 
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.hardware.camera2.CameraCharacteristics
 import android.util.Log
 import android.util.Rational
 import android.util.Size
@@ -243,30 +242,52 @@ data class CameraXState(
                 cameraSelector, cameraProvider
             )
             cameraProvider.unbindAll()
-            if (addAnalysisUseCase) {
-                if (currentCaptureMode == CaptureModes.VIDEO && cameraLevel < CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3) {
-                    Log.w(
-                        CamerawesomePlugin.TAG,
-                        "Trying to bind too many use cases for this device (level $cameraLevel), ignoring image analysis"
-                    )
-                } else {
-                    imageAnalysis = imageAnalysisBuilder!!.build()
-                    useCaseGroupBuilder.addUseCase(imageAnalysis!!)
 
-                }
+            // TODO Orientation might be wrong, to be verified
+            val viewPort = ViewPort.Builder(rational, Surface.ROTATION_0).build()
+            if (addAnalysisUseCase) {
+                imageAnalysis = imageAnalysisBuilder!!.build()
+                useCaseGroupBuilder.addUseCase(imageAnalysis!!)
             } else {
                 imageAnalysis = null
             }
-            // TODO Orientation might be wrong, to be verified
-            useCaseGroupBuilder.setViewPort(ViewPort.Builder(rational, Surface.ROTATION_0).build())
-                .build()
+            useCaseGroupBuilder.setViewPort(viewPort)
 
             concurrentCamera = null
-            previewCamera = cameraProvider.bindToLifecycle(
-                activity as LifecycleOwner,
-                cameraSelector,
-                useCaseGroupBuilder.build(),
-            )
+            // Previously image analysis was refused up front whenever we were in
+            // VIDEO mode on a camera below hardware level 3, silently dropping the
+            // analysis stream -- and with it every live image-stream feature -- on
+            // very common FULL-level devices (e.g. Pixel) that actually support
+            // Preview + VideoCapture + ImageAnalysis at bounded resolutions. Attempt
+            // the full combination first and only fall back to dropping the analysis
+            // stream if CameraX genuinely can't satisfy it, so the camera still
+            // starts instead of crashing.
+            previewCamera = try {
+                cameraProvider.bindToLifecycle(
+                    activity as LifecycleOwner,
+                    cameraSelector,
+                    useCaseGroupBuilder.build(),
+                )
+            } catch (e: Exception) {
+                if (!addAnalysisUseCase) throw e
+                Log.w(
+                    CamerawesomePlugin.TAG,
+                    "Could not bind image analysis alongside $currentCaptureMode on this device " +
+                            "(level $cameraLevel): ${e.message}. Falling back without image analysis."
+                )
+                imageAnalysis = null
+                cameraProvider.unbindAll()
+                val fallbackBuilder = UseCaseGroup.Builder()
+                previews?.firstOrNull()?.let { fallbackBuilder.addUseCase(it) }
+                imageCaptures.lastOrNull()?.let { fallbackBuilder.addUseCase(it) }
+                videoCaptures[sensors.first()]?.let { fallbackBuilder.addUseCase(it) }
+                fallbackBuilder.setViewPort(viewPort)
+                cameraProvider.bindToLifecycle(
+                    activity as LifecycleOwner,
+                    cameraSelector,
+                    fallbackBuilder.build(),
+                )
+            }
             previewCamera!!.cameraControl.enableTorch(flashMode == FlashMode.ALWAYS)
         }
     }
