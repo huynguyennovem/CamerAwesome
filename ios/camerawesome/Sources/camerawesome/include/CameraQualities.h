@@ -15,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (AVCaptureSessionPreset)selectVideoCapturePreset:(CGSize)size session:(AVCaptureSession *)session device:(AVCaptureDevice *)device;
 + (AVCaptureSessionPreset)selectVideoCapturePreset:(AVCaptureSession *)session device:(AVCaptureDevice *)device;
 + (CGSize)getSizeForPreset:(NSString *)preset;
++ (CGSize)captureSizeForRecordingQuality:(VideoRecordingQuality)quality;
 + (NSArray *)captureFormatsForDevice:(AVCaptureDevice *)device;
 
 @end

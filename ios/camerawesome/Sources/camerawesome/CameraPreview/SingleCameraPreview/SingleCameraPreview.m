@@ -178,20 +178,9 @@
 
   // Determine the target size based on the current mode and settings
   if (_captureMode == Video || _videoController.isRecording) {
-      // If recording video, prioritize the recording quality setting
-      // TODO: Need a way to get the CGSize from the _recordingQuality enum or _videoOptions
-      // For now, let's assume a helper function or default high quality if direct mapping isn't obvious.
-      // Placeholder: If video options exist, try to use them, otherwise fall back.
-      // If no direct mapping, maybe use the highest available preset suitable for video?
-      // Or just pass CGSizeZero to let selectVideoCapturePreset pick the best for video?
-      // For now, let's pass CGSizeZero to select the best default for video capture.
+      // Video mode uses the requested recording quality for the capture session.
       if (_videoOptions != nil) {
-         // Hypothetical: Get size from VideoOptions quality. Needs actual implementation.
-         // targetSize = [CameraQualities sizeFromQuality:_recordingQuality];
-         // If no direct mapping, maybe use the highest available preset suitable for video?
-         // Or just pass CGSizeZero to let selectVideoCapturePreset pick the best for video?
-         // For now, let's pass CGSizeZero to select the best default for video capture.
-         targetSize = CGSizeZero; 
+         targetSize = [CameraQualities captureSizeForRecordingQuality:_recordingQuality];
       } else if (!CGSizeEqualToSize(currentPreviewSize, CGSizeZero)){
          // Use provided size if valid and no video options
          targetSize = currentPreviewSize;

@@ -25,6 +25,23 @@
   return [self computeBestPresetWithSession:session device:device];
 }
 
++ (CGSize)captureSizeForRecordingQuality:(VideoRecordingQuality)quality {
+  switch (quality) {
+    case VideoRecordingQualityUhd:
+    case VideoRecordingQualityHighest:
+      return CGSizeMake(2160, 3840);
+    case VideoRecordingQualityFhd:
+      return CGSizeMake(1080, 1920);
+    case VideoRecordingQualityHd:
+      return CGSizeMake(720, 1280);
+    case VideoRecordingQualitySd:
+    case VideoRecordingQualityLowest:
+      return CGSizeMake(480, 640);
+    default:
+      return CGSizeMake(1080, 1920);
+  }
+}
+
 + (CGSize)getSizeForPreset:(NSString *)preset {
   if (preset == AVCaptureSessionPreset3840x2160) {
     return CGSizeMake(3840, 2160);
