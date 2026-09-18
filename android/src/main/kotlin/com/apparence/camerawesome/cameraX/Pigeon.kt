@@ -269,7 +269,12 @@ data class VideoOptions (
   /** The quality of the video recording, defaults to [VideoRecordingQuality.highest]. */
   val quality: VideoRecordingQuality? = null,
   val android: AndroidVideoOptions? = null,
-  val ios: CupertinoVideoOptions? = null
+  val ios: CupertinoVideoOptions? = null,
+  /**
+   * When set (> 0), a single recording is split into consecutive, complete
+   * video files of at most this duration (hand-added, see pigeons/pigeon.sh).
+   */
+  val segmentDurationMs: Long? = null
 
 ) {
   companion object {
@@ -285,7 +290,8 @@ data class VideoOptions (
       val ios: CupertinoVideoOptions? = (list[3] as List<Any?>?)?.let {
         CupertinoVideoOptions.fromList(it)
       }
-      return VideoOptions(enableAudio, quality, android, ios)
+      val segmentDurationMs = list.getOrNull(4).let { if (it is Int) it.toLong() else it as Long? }
+      return VideoOptions(enableAudio, quality, android, ios, segmentDurationMs)
     }
   }
   fun toList(): List<Any?> {
@@ -294,6 +300,7 @@ data class VideoOptions (
       quality?.raw,
       android?.toList(),
       ios?.toList(),
+      segmentDurationMs,
     )
   }
 }
@@ -333,7 +340,9 @@ data class CupertinoVideoOptions (
   /** Specify video codec, defaults to [AVVideoCodecTypeH264]. */
   val codec: CupertinoCodecType? = null,
   /** Specify video fps, defaults to [30]. */
-  val fps: Long? = null
+  val fps: Long? = null,
+  /** Average video bitrate in bits per second (hand-added, see pigeons/pigeon.sh). */
+  val bitrate: Long? = null
 
 ) {
   companion object {
@@ -346,7 +355,8 @@ data class CupertinoVideoOptions (
         CupertinoCodecType.ofRaw(it)
       }
       val fps = list[2].let { if (it is Int) it.toLong() else it as Long? }
-      return CupertinoVideoOptions(fileType, codec, fps)
+      val bitrate = list.getOrNull(3).let { if (it is Int) it.toLong() else it as Long? }
+      return CupertinoVideoOptions(fileType, codec, fps, bitrate)
     }
   }
   fun toList(): List<Any?> {
@@ -354,6 +364,7 @@ data class CupertinoVideoOptions (
       fileType?.raw,
       codec?.raw,
       fps,
+      bitrate,
     )
   }
 }

@@ -36,6 +36,17 @@ typedef void(^OnVideoWriterSetup)(void);
 @property(assign, nonatomic) CMTime lastAudioSampleTime;
 @property(assign, nonatomic) CMTime videoTimeOffset;
 @property(assign, nonatomic) CMTime audioTimeOffset;
+/// When > 0, recordings are split into consecutive, complete files of at most
+/// this duration (see VideoOptions.segmentDurationMs). 0 keeps a single file.
+@property(assign, nonatomic) NSInteger segmentDurationMs;
+/// Receives every finished segment of a segmented recording, on the main
+/// queue. The final segment is always delivered before the stop completion.
+@property(nonatomic, copy, nullable) void (^onSegmentEvent)(NSDictionary *event);
+/// Returns the current time of the capture session clock, used to convert
+/// sample timestamps to wall-clock time.
+@property(nonatomic, copy, nullable) CMTime (^clockTimeProvider)(void);
+/// True while a segmented recording is running.
+@property(readonly, nonatomic) bool isSegmentedRecordingActive;
 
 - (instancetype)init;
 - (void)recordVideoAtPath:(NSString *)path captureDevice:(AVCaptureDevice *)device orientation:(NSInteger)orientation audioSetupCallback:(OnAudioSetup)audioSetupCallback videoWriterCallback:(OnVideoWriterSetup)videoWriterCallback options:(CupertinoVideoOptions *)options quality:(VideoRecordingQuality)quality completion:(nonnull void (^)(FlutterError * _Nullable))completion;

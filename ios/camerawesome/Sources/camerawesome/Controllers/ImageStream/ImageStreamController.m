@@ -88,8 +88,12 @@ NSInteger const MaxPendingProcessedImage = 4;
     @"rotation": [self getInputImageOrientation:orientation]
   };
   
+  // Keep the sink alive: it can be cleared (onCancel) before this runs.
+  FlutterEventSink sink = _imageStreamEventSink;
   dispatch_async(dispatch_get_main_queue(), ^{
-    self->_imageStreamEventSink(imageBuffer);
+    if (sink != nil) {
+      sink(imageBuffer);
+    }
   });
   
 }

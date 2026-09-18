@@ -45,6 +45,8 @@ class CameraContext {
   /// Preferences concerning Exif (photos metadata)
   ExifPreferences exifPreferences;
 
+  StreamSubscription<VideoSegment>? _videoSegmentSubscription;
+
   Stream<AwesomeFilter> get filter$ => filterController.stream;
 
   Stream<bool> get filterSelectorOpened$ => filterSelectorOpened.stream;
@@ -79,6 +81,41 @@ class CameraContext {
     stateController = BehaviorSubject.seeded(preparingState);
     filterSelectorOpened = BehaviorSubject.seeded(false);
     mediaCaptureController = BehaviorSubject.seeded(null);
+    if ((saveConfig?.videoOptions?.segmentDurationMs ?? 0) > 0) {
+      _videoSegmentSubscription = CamerawesomePlugin.listenVideoSegments()
+          .listen(_onVideoSegment, onError: (Object _) {});
+    }
+  }
+
+  /// A segmented recording can end natively without [stopRecording] being
+  /// called (camera closed, session interrupted, encoder error). Leave the
+  /// recording state so the app can start a new recording.
+  void _onVideoSegment(VideoSegment segment) {
+    if (!segment.isFinal || stateController.isClosed) {
+      return;
+    }
+    final currentState = state;
+    if (currentState is! VideoRecordingCameraState ||
+        currentState.isStopRequested) {
+      return;
+    }
+    final currentCapture = mediaCaptureController.valueOrNull;
+    if (currentCapture == null ||
+        currentCapture.captureRequest.path != segment.recordingId) {
+      return;
+    }
+    if (!mediaCaptureController.isClosed) {
+      mediaCaptureController.add(
+        MediaCapture.failure(
+          captureRequest: currentCapture.captureRequest,
+          exception: Exception(
+            'Video recording ended unexpectedly (${segment.reason.name})'
+            '${segment.error != null ? ': ${segment.error}' : ''}',
+          ),
+        ),
+      );
+    }
+    changeState(VideoCameraState.from(this));
   }
 
   CameraContext.create(
@@ -158,6 +195,8 @@ class CameraContext {
   bool get imageAnalysisEnabled => analysisController?.enabled == true;
 
   dispose() {
+    _videoSegmentSubscription?.cancel();
+    _videoSegmentSubscription = null;
     sensorConfig.dispose();
     sensorConfigController.close();
     mediaCaptureController.close();

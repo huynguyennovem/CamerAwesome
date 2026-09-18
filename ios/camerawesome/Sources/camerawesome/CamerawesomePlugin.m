@@ -10,9 +10,14 @@
 #import "AnalysisController.h"
 
 FlutterEventSink orientationEventSink;
+/// Sink of `camerawesome/video_segments` (segmented recordings).
 FlutterEventSink videoRecordingEventSink;
 FlutterEventSink imageStreamEventSink;
 FlutterEventSink physicalButtonEventSink;
+
+/// Segment events emitted while Dart was not listening (main queue only).
+static NSMutableArray<NSDictionary *> *pendingVideoSegmentEvents;
+static const NSUInteger kMaxPendingVideoSegmentEvents = 64;
 
 @interface CamerawesomePlugin () <CameraInterface, AnalysisImageUtils>
 @property(readonly, nonatomic) NSObject<FlutterTextureRegistry> *textureRegistry;
@@ -55,12 +60,33 @@ FlutterEventSink physicalButtonEventSink;
                                                                       binaryMessenger:[registrar messenger]];
   FlutterEventChannel *physicalButtonChannel = [FlutterEventChannel eventChannelWithName:@"camerawesome/physical_button"
                                                                          binaryMessenger:[registrar messenger]];
+  FlutterEventChannel *videoSegmentsChannel = [FlutterEventChannel eventChannelWithName:@"camerawesome/video_segments"
+                                                                        binaryMessenger:[registrar messenger]];
   [orientationChannel setStreamHandler:instance];
   [imageStreamChannel setStreamHandler:instance];
   [physicalButtonChannel setStreamHandler:instance];
+  [videoSegmentsChannel setStreamHandler:instance];
   
   CameraInterfaceSetup(registrar.messenger, instance);
   AnalysisImageUtilsSetup(registrar.messenger, instance);
+}
+
+#pragma mark - Video segments
+
+/// Sends a segment event to Dart, or keeps it until Dart listens.
+/// Must be called on the main queue.
++ (void)sendVideoSegmentEvent:(NSDictionary *)event {
+  if (videoRecordingEventSink != nil) {
+    videoRecordingEventSink(event);
+    return;
+  }
+  if (pendingVideoSegmentEvents == nil) {
+    pendingVideoSegmentEvents = [NSMutableArray new];
+  }
+  if (pendingVideoSegmentEvents.count >= kMaxPendingVideoSegmentEvents) {
+    [pendingVideoSegmentEvents removeObjectAtIndex:0];
+  }
+  [pendingVideoSegmentEvents addObject:event];
 }
 
 #pragma mark - Camera engine methods
@@ -132,6 +158,18 @@ FlutterEventSink physicalButtonEventSink;
                                                         captureMode:captureModeType
                                                          completion:completion
                                                       dispatchQueue:dispatch_queue_create("camerawesome.single_preview.dispatchqueue", NULL)];
+    
+    VideoController *videoController = self.camera.videoController;
+    NSInteger segmentDurationMs = videoOptions.segmentDurationMs != nil ? videoOptions.segmentDurationMs.integerValue : 0;
+    videoController.segmentDurationMs = MAX(segmentDurationMs, 0);
+    if (videoOptions != nil && videoOptions.enableAudio != nil) {
+      // Honor VideoOptions.enableAudio like Android does: without this the
+      // mic was always added to the capture session when recording.
+      [videoController setIsAudioEnabled:videoOptions.enableAudio.boolValue];
+    }
+    videoController.onSegmentEvent = ^(NSDictionary *event) {
+      [CamerawesomePlugin sendVideoSegmentEvent:event];
+    };
     
     int64_t textureId = [self->_textureRegistry registerTexture:self.camera.previewTexture];
     
@@ -230,6 +268,13 @@ FlutterEventSink physicalButtonEventSink;
     if (self.camera != nil) {
       [self.camera setPhysicalButtonEventSink:physicalButtonEventSink];
     }
+  } else if ([arguments  isEqual: @"videoSegmentsChannel"]) {
+    videoRecordingEventSink = eventSink;
+    NSArray<NSDictionary *> *pending = [pendingVideoSegmentEvents copy];
+    [pendingVideoSegmentEvents removeAllObjects];
+    for (NSDictionary *event in pending) {
+      eventSink(event);
+    }
   }
   
   return nil;
@@ -254,6 +299,8 @@ FlutterEventSink physicalButtonEventSink;
     if (self.camera != nil) {
       [self.camera setPhysicalButtonEventSink:physicalButtonEventSink];
     }
+  } else if ([arguments  isEqual: @"videoSegmentsChannel"]) {
+    videoRecordingEventSink = nil;
   }
   return nil;
 }
@@ -341,6 +388,11 @@ FlutterEventSink physicalButtonEventSink;
     return;
   }
   
+  if (self.camera.videoController.segmentDurationMs > 0) {
+    *error = [FlutterError errorWithCode:@"UNSUPPORTED" message:@"pause is not supported for segmented recordings" details:nil];
+    return;
+  }
+  
   [self.camera pauseVideoRecording];
 }
 
@@ -365,7 +417,22 @@ FlutterEventSink physicalButtonEventSink;
     return;
   }
   
-  [self.camera recordVideoAtPath:[paths firstObject] completion:completion];
+  if ([paths count] > 1 && self.camera.videoController.segmentDurationMs > 0) {
+    completion([FlutterError errorWithCode:@"VIDEO_ERROR" message:@"segmented recording supports a single sensor" details:nil]);
+    return;
+  }
+  
+  // Start on the queue frames are appended on, so the writer is never set up
+  // while a frame is being written.
+  SingleCameraPreview *camera = self.camera;
+  NSString *path = [paths firstObject];
+  [camera performOnSampleQueue:^{
+    [camera recordVideoAtPath:path completion:^(FlutterError * _Nullable error) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        completion(error);
+      });
+    }];
+  }];
 }
 
 - (void)resumeVideoRecordingWithError:(FlutterError * _Nullable __autoreleasing * _Nonnull)error {
@@ -376,6 +443,11 @@ FlutterEventSink physicalButtonEventSink;
   
   if (self.camera == nil) {
     *error = [FlutterError errorWithCode:@"MULTI_CAMERA_UNSUPPORTED" message:@"this feature is currently not supported with multi camera feature" details:nil];
+    return;
+  }
+  
+  if (self.camera.videoController.segmentDurationMs > 0) {
+    *error = [FlutterError errorWithCode:@"UNSUPPORTED" message:@"resume is not supported for segmented recordings" details:nil];
     return;
   }
   
@@ -407,9 +479,15 @@ FlutterEventSink physicalButtonEventSink;
     return;
   }
   
-  dispatch_async(_dispatchQueue, ^{
-    [self->_camera stopRecordingVideo:completion];
-  });
+  // Stop on the queue frames are appended on (see recordVideoSensors).
+  SingleCameraPreview *camera = self.camera;
+  [camera performOnSampleQueue:^{
+    [camera stopRecordingVideo:^(NSNumber * _Nullable result, FlutterError * _Nullable error) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        completion(result, error);
+      });
+    }];
+  }];
 }
 
 #pragma mark - General methods

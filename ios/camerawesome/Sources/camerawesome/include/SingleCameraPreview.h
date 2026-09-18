@@ -95,6 +95,9 @@ AVCaptureAudioDataOutputSampleBufferDelegate>
 - (void)takePictureAtPath:(NSString *)path completion:(nonnull void (^)(NSNumber * _Nullable, FlutterError * _Nullable))completion;
 - (void)recordVideoAtPath:(NSString *)path completion:(nonnull void (^)(FlutterError * _Nullable))completion;
 - (void)stopRecordingVideo:(nonnull void (^)(NSNumber * _Nullable, FlutterError * _Nullable))completion;
+/// Runs [block] on the queue video frames are delivered on. Recording must be
+/// started and stopped on this queue.
+- (void)performOnSampleQueue:(dispatch_block_t)block;
 - (void)focusOnPoint:(CGPoint)position preview:(CGSize)preview error:(FlutterError * _Nullable __autoreleasing * _Nonnull)error;
 - (void)dispose;
 - (void)setSensor:(PigeonSensor *)sensor;

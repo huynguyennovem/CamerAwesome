@@ -42,6 +42,9 @@ class CamerawesomePlugin {
   static const EventChannel _physicalButtonChannel =
       EventChannel('camerawesome/physical_button');
 
+  static const EventChannel _videoSegmentsChannel =
+      EventChannel('camerawesome/video_segments');
+
   static Stream<CameraOrientations>? _orientationStream;
 
   static Stream<CameraPhysicalButton>? _physicalButtonStream;
@@ -49,6 +52,8 @@ class CamerawesomePlugin {
   static Stream<bool>? _permissionsStream;
 
   static Stream<Map<String, dynamic>>? _imagesStream;
+
+  static Stream<VideoSegment>? _videoSegmentsStream;
 
   static CameraRunningState currentState = CameraRunningState.stopped;
 
@@ -135,6 +140,24 @@ class CamerawesomePlugin {
       sink.add(physicalButton!);
     }));
     return _physicalButtonStream;
+  }
+
+  /// Finished files of segmented recordings (see
+  /// [VideoOptions.segmentDurationMs]), in order.
+  ///
+  /// Every segment of a recording, including the last one ([VideoSegment.isFinal]),
+  /// is delivered before [stopRecordingVideo] completes. Events produced while
+  /// nobody listens are buffered natively (up to 64) and replayed on listen,
+  /// so a new listener can receive segments of an earlier recording: match
+  /// [VideoSegment.recordingId] against the `CaptureRequest.path` you started.
+  static Stream<VideoSegment> listenVideoSegments() {
+    return _videoSegmentsStream ??= _videoSegmentsChannel
+        .receiveBroadcastStream('videoSegmentsChannel')
+        .map(
+          (event) => VideoSegment.fromMap(
+            Map<Object?, Object?>.from(event as Map<Object?, Object?>),
+          ),
+        );
   }
 
   static Stream<bool>? listenPermissionResult() {
@@ -292,7 +315,7 @@ class CamerawesomePlugin {
     return CameraInterface().resumeVideoRecording();
   }
 
-  static stopRecordingVideo() {
+  static Future<bool> stopRecordingVideo() {
     return CameraInterface().stopRecordingVideo();
   }
 

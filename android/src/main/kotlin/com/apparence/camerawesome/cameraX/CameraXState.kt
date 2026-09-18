@@ -56,6 +56,14 @@ data class CameraXState(
     var imageAnalysisBuilder: ImageAnalysisBuilder? = null
     private var imageAnalysis: ImageAnalysis? = null
 
+    /**
+     * True while a segmented recording is running. [updateLifecycle] then keeps
+     * the bound [VideoCapture] instance (and its Recorder) instead of building a
+     * new one, so that rebinding (e.g. starting image analysis) doesn't end the
+     * persistent recording.
+     */
+    var isRecordingActive: () -> Boolean = { false }
+
     private val mainCameraInfos: CameraInfo
         @SuppressLint("RestrictedApi") get() {
             if (previewCamera == null && concurrentCamera == null) {
@@ -90,6 +98,8 @@ data class CameraXState(
 
     @SuppressLint("RestrictedApi", "UnsafeOptInUsageError")
     fun updateLifecycle(activity: Activity) {
+        val retainedVideoCaptures: Map<PigeonSensor, VideoCapture<Recorder>> =
+            if (isRecordingActive()) HashMap(videoCaptures) else emptyMap()
         previews = mutableListOf()
         imageCaptures.clear()
         videoCaptures.clear()
@@ -159,7 +169,8 @@ data class CameraXState(
                     useCaseGroupBuilder.addUseCase(imageCapture)
                     imageCaptures.add(imageCapture)
                 } else {
-                    val videoCapture = buildVideoCapture(videoOptions)
+                    val videoCapture =
+                        retainedVideoCaptures[sensor] ?: buildVideoCapture(videoOptions)
                     useCaseGroupBuilder.addUseCase(videoCapture)
                     videoCaptures[sensor] = videoCapture
                 }
@@ -231,7 +242,10 @@ data class CameraXState(
                 useCaseGroupBuilder.addUseCase(imageCapture)
                 imageCaptures.add(imageCapture)
             } else if (currentCaptureMode == CaptureModes.VIDEO) {
-                val videoCapture = buildVideoCapture(videoOptions)
+                // A persistent recording follows its VideoCapture across
+                // rebinds, including a switch to another camera.
+                val videoCapture =
+                    retainedVideoCaptures.values.firstOrNull() ?: buildVideoCapture(videoOptions)
                 useCaseGroupBuilder.addUseCase(videoCapture)
                 videoCaptures[sensors.first()] = videoCapture
             }
@@ -375,8 +389,11 @@ data class CameraXState(
         currentCaptureMode = captureMode
         when (currentCaptureMode) {
             CaptureModes.PHOTO -> {
-                // Release video related stuff
-                videoCaptures.clear()
+                // Release video related stuff, unless a segmented recording is
+                // still running (updateLifecycle keeps its VideoCapture).
+                if (!isRecordingActive()) {
+                    videoCaptures.clear()
+                }
                 recordings?.forEach { it.close() }
                 recordings = null
 

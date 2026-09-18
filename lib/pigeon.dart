@@ -191,6 +191,7 @@ class VideoOptions {
     this.quality,
     this.android,
     this.ios,
+    this.segmentDurationMs,
   });
 
   /// Enable audio while video recording
@@ -203,12 +204,20 @@ class VideoOptions {
 
   CupertinoVideoOptions? ios;
 
+  /// When set (> 0), a single recording is split into consecutive, complete
+  /// video files of at most this duration. Each finished file is reported by
+  /// `CamerawesomePlugin.listenVideoSegments()`. Values below 5000 are clamped
+  /// to 5000. Only supported with a single sensor; pause/resume are not
+  /// supported in this mode.
+  int? segmentDurationMs;
+
   Object encode() {
     return <Object?>[
       enableAudio,
       quality?.index,
       android?.encode(),
       ios?.encode(),
+      segmentDurationMs,
     ];
   }
 
@@ -225,6 +234,7 @@ class VideoOptions {
       ios: result[3] != null
           ? CupertinoVideoOptions.decode(result[3]! as List<Object?>)
           : null,
+      segmentDurationMs: result.length > 4 ? result[4] as int? : null,
     );
   }
 }
@@ -264,6 +274,7 @@ class CupertinoVideoOptions {
     this.fileType,
     this.codec,
     this.fps,
+    this.bitrate,
   });
 
   /// Specify video file type, defaults to [AVFileTypeQuickTimeMovie].
@@ -275,11 +286,16 @@ class CupertinoVideoOptions {
   /// Specify video fps, defaults to [30].
   int? fps;
 
+  /// Average video bitrate in bits per second. Only set it if a custom
+  /// bitrate is desired.
+  int? bitrate;
+
   Object encode() {
     return <Object?>[
       fileType?.index,
       codec?.index,
       fps,
+      bitrate,
     ];
   }
 
@@ -293,6 +309,7 @@ class CupertinoVideoOptions {
           ? CupertinoCodecType.values[result[1]! as int]
           : null,
       fps: result[2] as int?,
+      bitrate: result.length > 3 ? result[3] as int? : null,
     );
   }
 }

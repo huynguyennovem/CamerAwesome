@@ -39,7 +39,10 @@
   _captureVideoOutput = [AVCaptureVideoDataOutput new];
   _captureVideoOutput.videoSettings = @{(NSString*)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA)};
   [_captureVideoOutput setAlwaysDiscardsLateVideoFrames:YES];
-  [_captureVideoOutput setSampleBufferDelegate:self queue:dispatch_get_main_queue()];
+  // Frames are always delivered on the preview queue, the queue recording
+  // starts, stops and appends on (see performOnSampleQueue:). Delivering on
+  // the main queue until the first recording raced with the writer.
+  [_captureVideoOutput setSampleBufferDelegate:self queue:_dispatchQueue];
   [_captureSession addOutputWithNoConnections:_captureVideoOutput];
   
   [self initCameraPreview:sensor];
@@ -60,6 +63,14 @@
   
   // Controllers init
   _videoController = [[VideoController alloc] init];
+  __weak AVCaptureSession *weakSession = _captureSession;
+  _videoController.clockTimeProvider = ^CMTime{
+    CMClockRef clock = NULL;
+    if (@available(iOS 15.4, *)) {
+      clock = weakSession.synchronizationClock;
+    }
+    return CMClockGetTime(clock != NULL ? clock : CMClockGetHostTimeClock());
+  };
   _imageStreamController = [[ImageStreamController alloc] initWithStreamImages:streamImages];
   _motionController = [[MotionController alloc] init];
   _locationController = [[LocationController alloc] init];
@@ -272,7 +283,20 @@
 
 /// Stop camera preview
 - (void)stop {
+  // The recording state is only safe to read on the sample queue.
+  [self performOnSampleQueue:^{
+    if (self->_videoController.isSegmentedRecordingActive) {
+      // Finalize the open segment; the writer doesn't need the session
+      // running.
+      [self->_videoController stopRecordingVideo:^(NSNumber * _Nullable result, FlutterError * _Nullable error) {}];
+    }
+  }];
   [_captureSession stopRunning];
+}
+
+/// Runs [block] on the queue video frames are delivered on.
+- (void)performOnSampleQueue:(dispatch_block_t)block {
+  dispatch_async(_dispatchQueue, block);
 }
 
 /// Set sensor between Front & Rear camera
@@ -432,7 +456,10 @@
 }
 
 - (void)receivedImageFromStream {
-  [self.imageStreamController receivedImageFromStream];
+  // The counters are also written from the sample queue (captureOutput).
+  [self performOnSampleQueue:^{
+    [self.imageStreamController receivedImageFromStream];
+  }];
 }
 
 /// Get the first available camera on device (front or rear)
@@ -467,7 +494,7 @@
   
   _captureMode = captureMode;
   
-  if (captureMode == Video) {
+  if (captureMode == Video && _videoController.isAudioEnabled) {
     [self setUpCaptureSessionForAudioError:^(NSError *audioError) {
       *error = [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"error when trying to setup audio" details:[audioError localizedDescription]];
     }];
@@ -547,7 +574,7 @@
 
 /// Stop recording video
 - (void)stopRecordingVideo:(nonnull void (^)(NSNumber * _Nullable, FlutterError * _Nullable))completion {
-  if (_videoController.isRecording) {
+  if (_videoController.isRecording || _videoController.segmentDurationMs > 0) {
     [_videoController stopRecordingVideo:completion];
   } else {
     completion(@(NO), [FlutterError errorWithCode:@"VIDEO_ERROR" message:@"video is not recording" details:@""]);

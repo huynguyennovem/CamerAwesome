@@ -26,6 +26,16 @@ class VideoRecordingCameraState extends CameraState {
 
   final CaptureRequestBuilder filePathBuilder;
 
+  bool _stopRequested = false;
+
+  /// True once [stopRecording] has been called on this state.
+  bool get isStopRequested => _stopRequested;
+
+  /// Whether this recording is split into segments (pause / resume are not
+  /// supported then).
+  bool get _isSegmented =>
+      (cameraContext.saveConfig?.videoOptions?.segmentDurationMs ?? 0) > 0;
+
   @override
   void setState(CaptureMode captureMode) {
     printLog('''
@@ -40,6 +50,12 @@ class VideoRecordingCameraState extends CameraState {
   /// [startRecording] must have been called before.
   /// Call [resumeRecording] to resume the capture.
   Future<void> pauseRecording(MediaCapture currentCapture) async {
+    if (_isSegmented) {
+      printLog("""
+      warning: pause is not supported for segmented recordings
+    """);
+      return;
+    }
     if (!currentCapture.isVideo) {
       throw "Trying to pause a video while currentCapture is not a video (${currentCapture.captureRequest.when(
         single: (single) => single.file!.path,
@@ -58,6 +74,12 @@ class VideoRecordingCameraState extends CameraState {
   /// Resumes a video recording.
   /// [pauseRecording] must have been called before.
   Future<void> resumeRecording(MediaCapture currentCapture) async {
+    if (_isSegmented) {
+      printLog("""
+      warning: resume is not supported for segmented recordings
+    """);
+      return;
+    }
     if (!currentCapture.isVideo) {
       throw "Trying to pause a video while currentCapture is not a video (${currentCapture.captureRequest.when(
         single: (single) => single.file!.path,
@@ -74,8 +96,9 @@ class VideoRecordingCameraState extends CameraState {
     );
   }
 
-  // TODO Video recording might end due to other reasons (not enough space left...)
-  // CameraAwesome is not notified in these cases atm
+  // Video recording might end due to other reasons (not enough space left...).
+  // CameraAwesome is only notified of these for segmented recordings
+  // (VideoOptions.segmentDurationMs), see CameraContext.
   Future<void> stopRecording({
     OnVideoCallback? onVideo,
     OnVideoFailedCallback? onVideoFailed,
@@ -84,19 +107,31 @@ class VideoRecordingCameraState extends CameraState {
     if (currentCapture == null) {
       return;
     }
-    final result = await CamerawesomePlugin.stopRecordingVideo();
-    if (result) {
-      _mediaCapture = MediaCapture.success(
-        captureRequest: currentCapture.captureRequest,
-      );
-      onVideo?.call(currentCapture.captureRequest);
-    } else {
+    _stopRequested = true;
+    try {
+      final result = await CamerawesomePlugin.stopRecordingVideo();
+      if (result) {
+        _mediaCapture = MediaCapture.success(
+          captureRequest: currentCapture.captureRequest,
+        );
+        onVideo?.call(currentCapture.captureRequest);
+      } else {
+        _mediaCapture = MediaCapture.failure(
+          captureRequest: currentCapture.captureRequest,
+        );
+        onVideoFailed?.call(Exception("Error while stop recording"));
+      }
+    } on Exception catch (e) {
       _mediaCapture = MediaCapture.failure(
         captureRequest: currentCapture.captureRequest,
+        exception: e,
       );
-      onVideoFailed?.call(Exception("Error while stop recording"));
+      onVideoFailed?.call(e);
+    } finally {
+      // Always leave the recording state: staying in it would block any
+      // further recording.
+      cameraContext.changeState(VideoCameraState.from(cameraContext));
     }
-    cameraContext.changeState(VideoCameraState.from(cameraContext));
   }
 
   /// If video recording should [enableAudio].

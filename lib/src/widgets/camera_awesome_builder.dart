@@ -376,6 +376,9 @@ class _CameraWidgetBuilder extends State<CameraAwesomeBuilder>
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
+        // Stopping here (still foreground on iOS) keeps the file valid: at
+        // `paused` the writer is usually already interrupted. A segmented
+        // recording simply continues in a new file when the app comes back.
         _cameraContext //
             .state
             .when(onVideoRecordingMode: (mode) => mode.stopRecording());

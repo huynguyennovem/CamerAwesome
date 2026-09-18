@@ -71,6 +71,9 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
     private var cancellationTokenSource = CancellationTokenSource()
     private var lastRecordedVideos: List<BehaviorSubject<Boolean>>? = null
     private var lastRecordedVideoSubscriptions: MutableList<Disposable>? = null
+    private val videoSegmentsHandler = VideoSegmentsStreamHandler()
+    private var segmentDurationMs: Long = 0
+    private var segmentedRecorder: SegmentedVideoRecorder? = null
     private var colorMatrix: List<Double>? = null
 
     private val noneFilter: List<Double> = listOf(
@@ -144,6 +147,11 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
 
         val cameraProvider = getCameraProvider()
 
+        segmentDurationMs = videoOptions?.segmentDurationMs
+            ?.takeIf { it > 0 }
+            ?.coerceAtLeast(SegmentedVideoRecorder.MIN_SEGMENT_DURATION_MS)
+            ?: 0
+
         val mode = CaptureModes.valueOf(captureMode)
         cameraState = CameraXState(cameraProvider = cameraProvider,
             textureEntries = sensors.mapIndexed { index: Int, pigeonSensor: PigeonSensor ->
@@ -160,6 +168,7 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
             this.updateAspectRatio(aspectRatio)
             this.flashMode = FlashMode.valueOf(flashMode)
             this.enableAudioRecording = videoOptions?.enableAudio ?: true
+            this.isRecordingActive = { segmentedRecorder?.isActive == true }
         }
         this.exifPreferences = exifPreferences
         orientationStreamListener =
@@ -440,6 +449,10 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
     override fun recordVideo(
         sensors: List<PigeonSensor>, paths: List<String?>, callback: (Result<Unit>) -> Unit
     ) {
+        if (segmentDurationMs > 0) {
+            recordSegmentedVideo(sensors, paths, callback)
+            return
+        }
         if (sensors.size != paths.size) {
             throw Exception("sensors and paths must have the same length")
         }
@@ -521,7 +534,90 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
         }
     }
 
+    /**
+     * Records one sensor as consecutive files of at most [segmentDurationMs]
+     * each. Finished files are reported on [VideoSegmentsStreamHandler.CHANNEL_NAME].
+     */
+    private fun recordSegmentedVideo(
+        sensors: List<PigeonSensor>, paths: List<String?>, callback: (Result<Unit>) -> Unit
+    ) {
+        if (segmentedRecorder?.isActive == true) {
+            callback(Result.failure(FlutterError("VIDEO_ERROR", "already recording video")))
+            return
+        }
+        val path = paths.firstOrNull()
+        val videoCapture = cameraState.videoCaptures.values.firstOrNull()
+        if (sensors.size != 1 || paths.size != 1 || path == null || videoCapture == null) {
+            callback(
+                Result.failure(
+                    FlutterError(
+                        "VIDEO_ERROR",
+                        "segmented recording requires exactly one sensor, one path and video mode",
+                    )
+                )
+            )
+            return
+        }
+        val currentActivity = activity
+        if (currentActivity == null) {
+            callback(Result.failure(FlutterError("VIDEO_ERROR", "no activity attached")))
+            return
+        }
+        val withAudio = cameraState.enableAudioRecording && cameraPermissions.hasPermission(
+            currentActivity, listOf(Manifest.permission.RECORD_AUDIO)
+        )
+        if (cameraState.enableAudioRecording && !withAudio) {
+            Log.w(
+                CamerawesomePlugin.TAG,
+                "RECORD_AUDIO permission missing: recording segmented video without audio"
+            )
+        }
+        orientationStreamListener?.let {
+            videoCapture.targetRotation = it.surfaceOrientation
+        }
+        File(path).parentFile?.mkdirs()
+        // Created and published synchronously: a second recordVideo call must
+        // see this recorder, or its recording would be left running forever.
+        val recorder = SegmentedVideoRecorder(
+            context = currentActivity,
+            videoCapture = videoCapture,
+            basePath = path,
+            segmentDurationMs = segmentDurationMs,
+            withAudio = withAudio,
+            executor = cameraState.executor(currentActivity),
+            emitter = videoSegmentsHandler,
+        )
+        segmentedRecorder = recorder
+        if (!recorder.start()) {
+            segmentedRecorder = null
+            callback(
+                Result.failure(FlutterError("VIDEO_ERROR", "could not start the video recording"))
+            )
+            return
+        }
+        callback(Result.success(Unit))
+    }
+
     override fun stopRecordingVideo(callback: (Result<Boolean>) -> Unit) {
+        // The recorder is kept until its last file is reported, so a second
+        // stop (app backgrounded, camera disposed) answers with its result
+        // instead of falling through to the single-file path.
+        val recorder = segmentedRecorder
+        if (recorder != null) {
+            recorder.stop { hasUsableSegment ->
+                if (segmentedRecorder === recorder) {
+                    segmentedRecorder = null
+                }
+                callback(Result.success(hasUsableSegment))
+            }
+            return
+        }
+        val recordings = cameraState.recordings
+        if (recordings.isNullOrEmpty()) {
+            // The recording already ended with an error (see recordVideo).
+            callback(Result.success(false))
+            return
+        }
         var submitted = false
         for (index in 0 until cameraState.recordings!!.size) {
             val countDownTimer = object : CountDownTimer(5000, 5000) {
@@ -555,11 +651,27 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
     }
 
     override fun pauseVideoRecording() {
+        if (segmentedRecorder != null) {
+            throw FlutterError("UNSUPPORTED", "pause is not supported for segmented recordings")
+        }
         cameraState.recordings?.forEach { it.pause() }
     }
 
     override fun resumeVideoRecording() {
+        if (segmentedRecorder != null) {
+            throw FlutterError("UNSUPPORTED", "resume is not supported for segmented recordings")
+        }
         cameraState.recordings?.forEach { it.resume() }
+    }
+
+    /** Persistent recordings survive unbindAll(): stop them explicitly. */
+    private fun stopSegmentedRecording() {
+        val recorder = segmentedRecorder ?: return
+        recorder.stop {
+            if (segmentedRecorder === recorder) {
+                segmentedRecorder = null
+            }
+        }
     }
 
     override fun receivedImageFromStream() {
@@ -574,6 +686,7 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
 
     override fun stop(): Boolean {
         orientationStreamListener?.stop()
+        stopSegmentedRecording()
         cameraState.stop()
         return true
     }
@@ -810,6 +923,10 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
         EventChannel(binding.binaryMessenger, "camerawesome/physical_button").setStreamHandler(
             physicalButtonHandler
         )
+        EventChannel(
+            binding.binaryMessenger,
+            VideoSegmentsStreamHandler.CHANNEL_NAME
+        ).setStreamHandler(videoSegmentsHandler)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPluginBinding) {
@@ -832,6 +949,7 @@ class CameraAwesomeX : CameraInterface, FlutterPlugin, ActivityAware {
     }
 
     override fun onDetachedFromActivity() {
+        stopSegmentedRecording()
         activity = null
         cancellationTokenSource.cancel()
         cameraPermissions.onCancel(null)

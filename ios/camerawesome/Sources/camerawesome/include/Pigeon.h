@@ -150,6 +150,9 @@ typedef NS_ENUM(NSUInteger, AnalysisRotation) {
 @property(nonatomic, assign) VideoRecordingQuality quality;
 @property(nonatomic, strong, nullable) AndroidVideoOptions * android;
 @property(nonatomic, strong, nullable) CupertinoVideoOptions * ios;
+/// When set (> 0), a single recording is split into consecutive, complete
+/// video files of at most this duration (hand-added, see pigeons/pigeon.sh).
+@property(nonatomic, strong, nullable) NSNumber * segmentDurationMs;
 @end
 
 @interface AndroidVideoOptions : NSObject
@@ -171,6 +174,8 @@ typedef NS_ENUM(NSUInteger, AnalysisRotation) {
 @property(nonatomic, assign) CupertinoCodecType codec;
 /// Specify video fps, defaults to [30].
 @property(nonatomic, strong, nullable) NSNumber * fps;
+/// Average video bitrate in bits per second (hand-added, see pigeons/pigeon.sh).
+@property(nonatomic, strong, nullable) NSNumber * bitrate;
 @end
 
 @interface PigeonSensorTypeDevice : NSObject

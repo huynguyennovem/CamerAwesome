@@ -40,8 +40,11 @@ class VideoCameraState extends CameraState {
     try {
       await CamerawesomePlugin.recordVideo(captureRequest);
     } on Exception catch (e) {
+      // Nothing is recording: stay in this state so a new recording can be
+      // started (and so a stop is not expected).
       _mediaCapture =
           MediaCapture.failure(captureRequest: captureRequest, exception: e);
+      return captureRequest;
     }
     cameraContext.changeState(VideoRecordingCameraState.from(cameraContext));
     return captureRequest;

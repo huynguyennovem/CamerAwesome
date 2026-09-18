@@ -71,11 +71,19 @@ class VideoOptions {
   final AndroidVideoOptions? android;
   final CupertinoVideoOptions? ios;
 
+  /// When set (> 0), a single recording is split into consecutive, complete
+  /// video files of at most this duration. Each finished file is reported on
+  /// the `camerawesome/video_segments` event channel. Values below 5000 are
+  /// clamped to 5000. Only supported with a single sensor; pause/resume are
+  /// not supported in this mode.
+  final int? segmentDurationMs;
+
   VideoOptions({
     required this.android,
     required this.ios,
     required this.enableAudio,
     required this.quality,
+    required this.segmentDurationMs,
   });
 }
 
@@ -122,10 +130,15 @@ class CupertinoVideoOptions {
   /// Specify video fps, defaults to [30].
   final int? fps;
 
+  /// Average video bitrate in bits per second. Only set it if a custom
+  /// bitrate is desired.
+  final int? bitrate;
+
   CupertinoVideoOptions({
     this.fileType,
     this.codec,
     this.fps,
+    this.bitrate,
   });
 }
 

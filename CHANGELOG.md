@@ -1,3 +1,19 @@
+# Unreleased (fork)
+- Segmented video recording: `VideoOptions.segmentDurationMs` splits one recording into
+  consecutive complete files, reported by `CamerawesomePlugin.listenVideoSegments()`
+  (Android: rolling persistent CameraX recordings; iOS: gap-free AVAssetWriter rollover)
+- `CupertinoVideoOptions.bitrate`
+- iOS honors `VideoOptions.enableAudio` (the mic was always added before)
+- iOS: recording starts/stops on the sample queue; stop no longer hangs when no frame was written
+- Android: stopping after a failed recording no longer crashes (`recordings!!`);
+  a second stop request is answered instead of being dropped
+- Segmented recordings survive image analysis start/stop (the bound `VideoCapture`
+  is kept) and retry a segment the camera killed before it produced data
+- `startRecording` stays in video mode when the platform refuses to record, and
+  `stopRecording` always leaves the recording state
+- pause / resume are not supported for segmented recordings
+- Generated pigeon files are hand-edited (see `pigeons/pigeon.sh`)
+
 # 2.5.0
 - Fix iOS camera zoom change crash (thanks @haf and @chaosue) 
 - Fix camera preview not accurate with the result photo

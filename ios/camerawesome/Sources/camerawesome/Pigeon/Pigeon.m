@@ -184,6 +184,8 @@ static id GetNullableObjectAtIndex(NSArray *array, NSInteger key) {
   pigeonResult.quality = [GetNullableObjectAtIndex(list, 1) integerValue];
   pigeonResult.android = [AndroidVideoOptions nullableFromList:(GetNullableObjectAtIndex(list, 2))];
   pigeonResult.ios = [CupertinoVideoOptions nullableFromList:(GetNullableObjectAtIndex(list, 3))];
+  // Hand-added field: older Dart callers send a 4-element list.
+  pigeonResult.segmentDurationMs = list.count > 4 ? GetNullableObjectAtIndex(list, 4) : nil;
   return pigeonResult;
 }
 + (nullable VideoOptions *)nullableFromList:(NSArray *)list {
@@ -195,6 +197,7 @@ static id GetNullableObjectAtIndex(NSArray *array, NSInteger key) {
     @(self.quality),
     (self.android ? [self.android toList] : [NSNull null]),
     (self.ios ? [self.ios toList] : [NSNull null]),
+    (self.segmentDurationMs ?: [NSNull null]),
   ];
 }
 @end
@@ -239,6 +242,8 @@ static id GetNullableObjectAtIndex(NSArray *array, NSInteger key) {
   pigeonResult.fileType = [GetNullableObjectAtIndex(list, 0) integerValue];
   pigeonResult.codec = [GetNullableObjectAtIndex(list, 1) integerValue];
   pigeonResult.fps = GetNullableObjectAtIndex(list, 2);
+  // Hand-added field: older Dart callers send a 3-element list.
+  pigeonResult.bitrate = list.count > 3 ? GetNullableObjectAtIndex(list, 3) : nil;
   return pigeonResult;
 }
 + (nullable CupertinoVideoOptions *)nullableFromList:(NSArray *)list {
@@ -249,6 +254,7 @@ static id GetNullableObjectAtIndex(NSArray *array, NSInteger key) {
     @(self.fileType),
     @(self.codec),
     (self.fps ?: [NSNull null]),
+    (self.bitrate ?: [NSNull null]),
   ];
 }
 @end
